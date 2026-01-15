@@ -28,7 +28,7 @@ const voiceCloneSchema = z.object({
 export const synthesize = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const payload = synthSchema.parse(req.body);
-    const context = getOrgContext(req);
+    const context = await getOrgContext(req);
     const result = await TtsService.synthesize({
       ...context,
       text: payload.text,
@@ -56,7 +56,7 @@ export const synthesize = async (req: Request, res: Response, next: NextFunction
 export const synthesizeBatch = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const payload = batchSchema.parse(req.body);
-    const context = getOrgContext(req);
+    const context = await getOrgContext(req);
 
     const normalizedItems = payload.items.map((item) => ({
       text: item.text,
@@ -87,7 +87,7 @@ export const synthesizeBatch = async (req: Request, res: Response, next: NextFun
 
 export const listVoices = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const context = getOrgContext(req);
+    const context = await getOrgContext(req);
     const voices = await TtsService.listVoices(context.orgId);
     res.json(voices);
   } catch (error) {
@@ -103,7 +103,7 @@ export const voiceClone = async (req: Request, res: Response, next: NextFunction
     }
 
     const payload = voiceCloneSchema.parse(req.body);
-    const context = getOrgContext(req);
+    const context = await getOrgContext(req);
 
     const voice = await TtsService.cloneVoice({
       orgId: context.orgId,

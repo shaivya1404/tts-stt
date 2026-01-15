@@ -74,6 +74,9 @@ The seed step will create an `Acme Corp` organization with an owner account (`ow
 - **JWT login** – `POST /api/v1/auth/login` accepts email/password (and an optional `orgSlug` if the same email exists in multiple orgs) and returns a Bearer token. Include it via `Authorization: Bearer <token>` for any dashboard/admin route.
 - **API keys** – Owners/Admins can manage keys under `/api/v1/auth/api-keys`. Keys are shown once at creation time, hashed in the DB, and can be scoped to `tts` and/or `stt`. Supply them via the `x-api-key` header when calling job endpoints server-to-server.
 - **RBAC** – Middleware enforces roles for sensitive operations (e.g., model reloads, API key management, voice cloning). Rate limiting is applied per org/API key with configurable windows in `.env`.
+- **Dev-mode public inference endpoints** – During local development the TTS/STT/model/analytics routes are mounted without `requireAuthOrApiKey`, so you can hit them from curl/Postman without headers. When a JWT or API key is provided the normal scope/rate-limit enforcement still applies.
+
+Anonymous calls are associated with the organization identified by `DEV_ORG_ID` (optionally paired with `DEV_ORG_SLUG`/`DEV_ORG_NAME`). If those variables are not set, the backend reuses the first organization in the database or creates a placeholder "Development Playground" org so usage records continue to work.
 
 ## REST API Endpoints (Phase 2)
 All endpoints share the `/api/v1` prefix. Full OpenAPI docs are hosted at `http://localhost:4000/api/v1/docs` once the backend is running.
@@ -81,10 +84,12 @@ All endpoints share the `/api/v1` prefix. Full OpenAPI docs are hosted at `http:
 ### TTS
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| POST | `/tts/synthesize` | JWT or API key (scope `tts`) | Synchronously synthesize text to speech. Returns job metadata plus audio URL.
-| POST | `/tts/synthesize-batch` | JWT or API key (scope `tts`) | Submit multiple synthesis requests in one payload.
-| GET | `/tts/voices` | JWT or API key (scope `tts`) | List the organization’s voice profiles for the active org.
-| POST | `/tts/voice-clone` | JWT (owner/admin/developer) with optional API key scope `tts` | Upload a sample (`audio_sample`) to create a training voice profile. Audio is stored via the S3/MinIO adapter and the profile is marked `training`.
+| POST | `/tts/synthesize` | Public (JWT/API key optional) | Synchronously synthesize text to speech. Returns job metadata plus audio URL. API keys still need the `tts` scope when supplied.
+| POST | `/tts/synthesize-batch` | Public (JWT/API key optional) | Submit multiple synthesis requests in one payload; optional API keys still require the `tts` scope.
+| GET | `/tts/voices` | Public (JWT/API key optional) | List the organization’s voice profiles for the active org.
+| POST | `/tts/voice-clone` | Public (JWT/API key optional) | Upload a sample (`audio_sample`) to create a training voice profile. Audio is stored via the S3/MinIO adapter and the profile is marked `training`.
+
+Auth headers remain optional in dev mode—add `Authorization` or `x-api-key` only when you want to test those flows.
 
 Sample cURL:
 ```bash
@@ -122,7 +127,7 @@ curl -X POST http://localhost:4000/api/v1/tts/voice-clone \
 ```
 
 ### End-to-end TTS Flow
-1. **Request intake** – the backend validates JWT/API key scopes via `requireAuthOrApiKey`, enforces rate limits, and normalizes payloads using the Zod schemas defined in `src/controllers/tts.controller.ts`.
+1. **Request intake** – when auth headers are present the backend validates JWT/API key scopes, enforces rate limits, and normalizes payloads using the Zod schemas defined in `src/controllers/tts.controller.ts`.
 2. **Job tracking** – a `tts_jobs` row is inserted with status `processing`, linked to the organization, optional voice profile, and the original text/emotion/speed metadata.
 3. **ML invocation** – `TtsService` bridges to the FastAPI microservice at `/ml/tts/predict`. The ML service now runs a modular pipeline (language ID → text normalization → G2P → ECAPA-TDNN speaker encoder → style/emotion conditioning → VITS → HiFi-GAN → RNNoise → MOSNet) and returns `{ audio_path, duration, status, meta }`.
 4. **Persistence & billing** – successful runs create an `audio_files` record pointing at the ML-provided `audio_path`, mark the job `completed`, and emit a `usage_records` row measuring either `meta.char_count` or the raw character count. Failures set the job status to `failed` with the propagated error.
@@ -155,23 +160,24 @@ The `meta` payload exposes diagnostics such as the detected language, phoneme co
 ### STT
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| POST | `/stt/transcribe` | JWT or API key (scope `stt`) | Upload a single audio file (`audio_file`) for transcription.
-| POST | `/stt/batch-transcribe` | JWT or API key (scope `stt`) | Send multiple files (`audio_files`) and receive per-job IDs.
-| POST | `/stt/transcribe-realtime` | JWT or API key (scope `stt`) | REST stub returning `501` until the realtime WebSocket endpoint ships in Phase 5.
+| POST | `/stt/transcribe` | Public (JWT/API key optional) | Upload a single audio file (`audio_file`) for transcription. API keys still need the `stt` scope when supplied.
+| POST | `/stt/batch-transcribe` | Public (JWT/API key optional) | Send multiple files (`audio_files`) and receive per-job IDs.
+| POST | `/stt/transcribe-realtime` | Public (JWT/API key optional) | REST stub returning `501` until the realtime WebSocket endpoint ships in Phase 5.
 
 **Single-file transcription**
 
 - Endpoint: `POST /api/v1/stt/transcribe?language_hint=<optional-lang>`
-- Body: `multipart/form-data` with the field `audio_file` (max 30 MB). The request must include either a valid JWT or an API key that has the `stt` scope (`requireAuthOrApiKey` enforces this).
+- Body: `multipart/form-data` with the field `audio_file` (max 30 MB). Auth headers are optional in dev mode; when you include an API key it still needs the `stt` scope.
 - Response shape: `{ job_id, text, language, confidence, timestamps }`. Each call creates an `audio_files` row, kicks off an `stt_job`, stores the transcription payload, and records an `usage_records` entry with the detected duration.
 
 Example request:
 
 ```bash
 curl -X POST "http://localhost:4000/api/v1/stt/transcribe?language_hint=en-IN" \
-  -H "Authorization: Bearer <TOKEN>" \
   -F "audio_file=@/path/to/sample.wav"
 ```
+
+Add `-H "Authorization: Bearer <TOKEN>"` or `-H "x-api-key: <KEY>"` when you want to test authenticated flows.
 
 **Batch transcription**
 
@@ -179,7 +185,7 @@ curl -X POST "http://localhost:4000/api/v1/stt/transcribe?language_hint=en-IN" \
 - Body: `multipart/form-data` with repeated `audio_files` parts. Returns `{ "items": [ ... ] }`, where every element mirrors the single-file response payload for the corresponding upload.
 
 ### End-to-end STT Flow
-1. A client hits either `/api/v1/stt/transcribe` or `/api/v1/stt/batch-transcribe`. The backend validates auth/API key scopes, enforces rate limits, and uploads the incoming audio to the `audio_files` table via the storage helper (S3/MinIO compatible).
+1. A client hits either `/api/v1/stt/transcribe` or `/api/v1/stt/batch-transcribe`. When auth headers are present the backend validates JWT/API key scopes, enforces rate limits, and uploads the incoming audio to the `audio_files` table via the storage helper (S3/MinIO compatible).
 2. A corresponding row is inserted in `stt_jobs` (status `processing`). The backend then hands the raw buffer off to `mlSttClient`, which bridges to the FastAPI service at `/ml/stt/transcribe`.
 3. The STT FastAPI service runs the modular `STTPipeline` (Conformer RNNT primary + Whisper fallback, language ID, punctuation/ITN) and returns `{ text, language, confidence, timestamps, meta, modelUsed }`.
 4. The backend persists the `transcriptions` row, updates the `stt_jobs` status, and records a `usage_records` entry measured in seconds so analytics stay in sync. The final REST response simply echoes the job metadata plus transcription payload.
@@ -187,8 +193,8 @@ curl -X POST "http://localhost:4000/api/v1/stt/transcribe?language_hint=en-IN" \
 ### ML Model Management
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| GET | `/models/status` | JWT | Returns all ML models plus health from the FastAPI services.
-| POST | `/models/reload` | JWT (owner/admin) | Calls `initialize` on both ML services and updates model rows.
+| GET | `/models/status` | Public (JWT/API key optional) | Returns all ML models plus health from the FastAPI services.
+| POST | `/models/reload` | Public (JWT/API key optional) | Calls `initialize` on both ML services and updates model rows.
 
 ### ML STT Microservice
 The FastAPI-based STT microservice (default `http://localhost:8002`) exposes the following endpoints, which the backend now calls via the new `mlSttClient` integration:
@@ -215,7 +221,7 @@ The pipeline defined in `ml-service/stt-service/core/pipeline.py` chains audio p
 ### Analytics
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
-| GET | `/analytics/usage` | JWT | Aggregated usage (total TTS chars, STT seconds, daily rollups for the last 30 days).
+| GET | `/analytics/usage` | Public (JWT/API key optional) | Aggregated usage (total TTS chars, STT seconds, daily rollups for the last 30 days).
 
 Swagger definitions describe request/response shapes; refer to them for full field-level documentation.
 
