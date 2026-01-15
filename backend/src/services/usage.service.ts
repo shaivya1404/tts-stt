@@ -1,4 +1,4 @@
-import { UsageType } from '@prisma/client';
+import { Prisma, UsageType } from '@prisma/client';
 
 import prisma from '../lib/prisma';
 
@@ -7,7 +7,7 @@ export interface UsageRecordInput {
   apiKeyId?: string;
   type: UsageType;
   units: number;
-  metadata?: Record<string, unknown>;
+  metadata?: Prisma.InputJsonValue;
 }
 
 export const UsageService = {

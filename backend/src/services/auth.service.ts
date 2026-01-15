@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
+import jwt, { SignOptions } from 'jsonwebtoken';
 import { Prisma } from '@prisma/client';
 
 import config from '../config';
@@ -21,8 +21,14 @@ export interface LoginResult {
   };
 }
 
-const buildToken = (user: { id: string; orgId: string; role: string; email: string }): string =>
-  jwt.sign(
+const buildToken = (user: { id: string; orgId: string; role: string; email: string }): string => {
+  const expiresIn = config.jwt.expiresIn as SignOptions['expiresIn'];
+  const options: SignOptions = {
+    expiresIn,
+    algorithm: 'HS256',
+  };
+
+  return jwt.sign(
     {
       sub: user.id,
       orgId: user.orgId,
@@ -30,8 +36,9 @@ const buildToken = (user: { id: string; orgId: string; role: string; email: stri
       email: user.email,
     },
     config.jwt.secret,
-    { expiresIn: config.jwt.expiresIn },
+    options,
   );
+};
 
 export const AuthService = {
   async login(payload: LoginPayload): Promise<LoginResult> {

@@ -45,9 +45,10 @@ const attachJwtToRequest = async (req: Request): Promise<void> => {
   }
 
   ensureAuthContainer(req);
-  req.auth.user = user;
-  req.auth.organization = user.organization;
-  req.auth.orgId = user.orgId;
+  const auth = req.auth!;
+  auth.user = user;
+  auth.organization = user.organization;
+  auth.orgId = user.orgId;
 };
 
 export const optionalJwt = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
