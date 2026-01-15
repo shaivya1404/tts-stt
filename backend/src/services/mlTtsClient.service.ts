@@ -11,9 +11,10 @@ export interface TtsSynthesizeInput {
 }
 
 export interface TtsSynthesizeResult {
-  audioUrl: string;
-  duration: number;
+  audioPath: string | null;
+  duration: number | null;
   status: string;
+  meta?: Record<string, any>;
 }
 
 const BASE_URL = config.services.ttsServiceUrl;
@@ -28,10 +29,12 @@ export const mlTtsClient = {
       speed: payload.speed,
     });
 
+    const data = response.data;
     return {
-      audioUrl: response.data.audio_url,
-      duration: response.data.duration,
-      status: response.data.status,
+      audioPath: data.audio_path ?? null,
+      duration: typeof data.duration === 'number' ? data.duration : null,
+      status: data.status ?? 'success',
+      meta: data.meta ?? {},
     };
   },
 

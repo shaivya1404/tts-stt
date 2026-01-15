@@ -83,8 +83,8 @@ All endpoints share the `/api/v1` prefix. Full OpenAPI docs are hosted at `http:
 | --- | --- | --- | --- |
 | POST | `/tts/synthesize` | JWT or API key (scope `tts`) | Synchronously synthesize text to speech. Returns job metadata plus audio URL.
 | POST | `/tts/synthesize-batch` | JWT or API key (scope `tts`) | Submit multiple synthesis requests in one payload.
-| GET | `/tts/voices` | JWT | List the organization’s voice profiles.
-| POST | `/tts/voice-clone` | JWT (owner/admin/developer) | Upload a sample (`audio_sample`) to create a training voice profile. Audio is stored via the S3/MinIO adapter.
+| GET | `/tts/voices` | JWT or API key (scope `tts`) | List the organization’s voice profiles for the active org.
+| POST | `/tts/voice-clone` | JWT (owner/admin/developer) with optional API key scope `tts` | Upload a sample (`audio_sample`) to create a training voice profile. Audio is stored via the S3/MinIO adapter and the profile is marked `training`.
 
 Sample cURL:
 ```bash
@@ -93,6 +93,64 @@ curl -X POST http://localhost:4000/api/v1/tts/synthesize \
   -H "Content-Type: application/json" \
   -d '{"text": "Hello world", "language": "en-US"}'
 ```
+
+**Batch synthesis**
+```bash
+curl -X POST http://localhost:4000/api/v1/tts/synthesize-batch \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"items": [
+        {"text": "Hello team", "language": "en-IN", "voice_id": "default"},
+        {"text": "Namaste Duniya", "language": "hi-IN", "emotion": "happy"}
+      ]}'
+```
+
+**List voices**
+```bash
+curl -X GET http://localhost:4000/api/v1/tts/voices \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+**Voice clone upload**
+```bash
+curl -X POST http://localhost:4000/api/v1/tts/voice-clone \
+  -H "Authorization: Bearer <TOKEN>" \
+  -F "audio_sample=@/path/to/sample.wav" \
+  -F "name=Indic Voice" \
+  -F "language=hi-IN" \
+  -F "description=Customer provided clone"
+```
+
+### End-to-end TTS Flow
+1. **Request intake** – the backend validates JWT/API key scopes via `requireAuthOrApiKey`, enforces rate limits, and normalizes payloads using the Zod schemas defined in `src/controllers/tts.controller.ts`.
+2. **Job tracking** – a `tts_jobs` row is inserted with status `processing`, linked to the organization, optional voice profile, and the original text/emotion/speed metadata.
+3. **ML invocation** – `TtsService` bridges to the FastAPI microservice at `/ml/tts/predict`. The ML service now runs a modular pipeline (language ID → text normalization → G2P → ECAPA-TDNN speaker encoder → style/emotion conditioning → VITS → HiFi-GAN → RNNoise → MOSNet) and returns `{ audio_path, duration, status, meta }`.
+4. **Persistence & billing** – successful runs create an `audio_files` record pointing at the ML-provided `audio_path`, mark the job `completed`, and emit a `usage_records` row measuring either `meta.char_count` or the raw character count. Failures set the job status to `failed` with the propagated error.
+
+Voice cloning uploads the `audio_sample` to `voice-clone/<orgId>/...`, stores it as an `audio_files` row of type `voice_clone_sample`, and creates a `voice_profiles` entry with status `training` plus a placeholder `speaker_embedding_path` for downstream fine-tuning.
+
+### ML TTS Microservice
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/ml/tts/health` | Returns overall service status plus the in-memory model registry. |
+| `GET` | `/ml/tts/models` | Lists registered TTS models (`vits_multispkr_indic:v1` by default). |
+| `POST` | `/ml/tts/initialize` | Rebuilds and warms the in-process pipeline, marking the registry entry as `ready`. |
+| `POST` | `/ml/tts/reload` | Simulates a hot-reload cycle (set to `loading`, sleep, reinitialize). |
+| `POST` | `/ml/tts/predict` | Accepts `application/json` `{ text, language?, voice_id?, emotion?, speed? }` and runs the modular pipeline, returning `{ audio_path, duration, status, meta }`. |
+
+Sample `curl` hitting `/ml/tts/predict` directly:
+```bash
+curl -X POST http://localhost:8001/ml/tts/predict \
+  -H "Content-Type: application/json" \
+  -d '{
+        "text": "Team update at 5pm",
+        "language": "en-IN",
+        "emotion": "calm",
+        "speed": 1.1
+      }'
+```
+
+The `meta` payload exposes diagnostics such as the detected language, phoneme count, MOS estimate, character count, and the model/version pair so downstream services can log or bill accurately.
 
 ### STT
 | Method | Path | Auth | Description |
@@ -160,6 +218,27 @@ The pipeline defined in `ml-service/stt-service/core/pipeline.py` chains audio p
 | GET | `/analytics/usage` | JWT | Aggregated usage (total TTS chars, STT seconds, daily rollups for the last 30 days).
 
 Swagger definitions describe request/response shapes; refer to them for full field-level documentation.
+
+## TTS Training Workflows
+TTS checkpoints live under `${MODEL_BASE_PATH}/tts/<model_name>/<version>/`. The new training stubs demonstrate how to produce multi-speaker acoustic and vocoder artifacts that the serving pipeline (`vits_wrapper`, `vocoder_hifigan`) will eventually load from disk.
+
+1. **VITS multi-speaker skeleton**
+   ```bash
+   python ml-service/training/tts/train_vits.py \
+     --config ml-service/training/tts/configs/vits_multispkr_indic_v1.yaml \
+     --device cpu
+   ```
+   - Parses the shared YAML config (languages, manifests, optimizer, output layout), generates synthetic batches when manifests are missing, and saves checkpoints under `tts/<model_name>/<version>/checkpoints/` plus a `final.pt` snapshot.
+
+2. **HiFi-GAN placeholder**
+   ```bash
+   python ml-service/training/tts/train_hifigan.py \
+     --config ml-service/training/tts/configs/vits_multispkr_indic_v1.yaml \
+     --device cuda
+   ```
+   - Trains a minimal MLP vocoder against dummy mel/waveform pairs and drops weights in `tts/<model_name>/<version>/hifigan/`. Use the same config so acoustic/vocoder checkpoints remain in sync.
+
+Update `MODEL_BASE_PATH` (env var for the ML services) to point at a shared volume to make these files accessible to the FastAPI runtime.
 
 ## STT Training Workflows
 STT checkpoints are stored under `${MODEL_BASE_PATH}/stt/<family>/<model_name>/<version>/`. The ML service loads artifacts from that layout during startup.

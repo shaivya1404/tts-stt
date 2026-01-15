@@ -3,7 +3,7 @@ import multer from 'multer';
 import { UserRole } from '@prisma/client';
 
 import { synthesize, synthesizeBatch, listVoices, voiceClone } from '../controllers/tts.controller';
-import { optionalJwt, requireJwt, requireRole } from '../middlewares/auth.middleware';
+import { optionalJwt, requireAuthOrApiKey, requireRole } from '../middlewares/auth.middleware';
 import { optionalApiKey, requireOrgContext, ensureScopeWhenPresent } from '../middlewares/apiKey.middleware';
 import { rateLimit } from '../middlewares/rateLimit.middleware';
 
@@ -16,6 +16,7 @@ router.post(
   optionalJwt,
   optionalApiKey,
   ensureScopeWhenPresent('tts'),
+  requireAuthOrApiKey,
   requireOrgContext,
   rateLimit(),
   synthesize,
@@ -25,14 +26,27 @@ router.post(
   optionalJwt,
   optionalApiKey,
   ensureScopeWhenPresent('tts'),
+  requireAuthOrApiKey,
   requireOrgContext,
   rateLimit(),
   synthesizeBatch,
 );
-router.get('/voices', requireJwt, listVoices);
+router.get(
+  '/voices',
+  optionalJwt,
+  optionalApiKey,
+  ensureScopeWhenPresent('tts'),
+  requireAuthOrApiKey,
+  requireOrgContext,
+  listVoices,
+);
 router.post(
   '/voice-clone',
-  requireJwt,
+  optionalJwt,
+  optionalApiKey,
+  ensureScopeWhenPresent('tts'),
+  requireAuthOrApiKey,
+  requireOrgContext,
   requireRole([UserRole.owner, UserRole.admin, UserRole.developer]),
   upload.single('audio_sample'),
   voiceClone,
