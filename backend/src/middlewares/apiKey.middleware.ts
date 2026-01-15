@@ -5,10 +5,11 @@ import prisma from '../lib/prisma';
 
 const hashKey = (key: string): string => crypto.createHash('sha256').update(key).digest('hex');
 
-const ensureAuthContainer = (req: Request): void => {
+const ensureAuthContainer = (req: Request): NonNullable<Request['auth']> => {
   if (!req.auth) {
     req.auth = {};
   }
+  return req.auth;
 };
 
 const attachApiKey = async (req: Request): Promise<void> => {
@@ -29,10 +30,10 @@ const attachApiKey = async (req: Request): Promise<void> => {
     throw error;
   }
 
-  ensureAuthContainer(req);
-  req.auth.apiKey = apiKeyRecord;
-  req.auth.organization = apiKeyRecord.organization;
-  req.auth.orgId = apiKeyRecord.orgId;
+  const auth = ensureAuthContainer(req);
+  auth.apiKey = apiKeyRecord;
+  auth.organization = apiKeyRecord.organization;
+  auth.orgId = apiKeyRecord.orgId;
 
   await prisma.apiKey.update({
     where: { id: apiKeyRecord.id },

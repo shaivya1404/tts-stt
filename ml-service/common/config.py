@@ -27,7 +27,11 @@ class Settings(BaseSettings):
     environment: str = Field(default="development", alias="ENVIRONMENT")
     device: str = Field(default_factory=_autodetect_device, alias="DEVICE")
 
-    model_config = SettingsConfigDict(env_file=(".env",), env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=(".env",),
+        env_file_encoding="utf-8",
+        protected_namespaces=("settings_",),
+    )
 
 
 @lru_cache(maxsize=1)
