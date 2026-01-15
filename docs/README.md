@@ -54,6 +54,66 @@ npm run dev
 
 Use the `.env.example` files inside `backend/` and `frontend/` as references for local configuration.
 
+## Database & Prisma (Phase 2)
+Phase 2 introduces the full persistence layer via Prisma + PostgreSQL. All schema definitions live in `backend/prisma/schema.prisma` and the generated SQL migration is committed under `backend/prisma/migrations/`.
+
+Common commands:
+```bash
+cd backend
+npm install
+# Generate Prisma client
+npm run prisma:generate
+# Apply migrations to your local DB
+npm run prisma:migrate
+# Seed a default org + owner account
+npm run prisma:seed
+```
+The seed step will create an `Acme Corp` organization with an owner account (`owner@acme.dev` / `ChangeMe123!`) and two baseline ML model rows so status endpoints return data. Update the corresponding `SEED_*` environment variables if you want to customize credentials.
+
+## Auth & Security
+- **JWT login** – `POST /api/v1/auth/login` accepts email/password (and an optional `orgSlug` if the same email exists in multiple orgs) and returns a Bearer token. Include it via `Authorization: Bearer <token>` for any dashboard/admin route.
+- **API keys** – Owners/Admins can manage keys under `/api/v1/auth/api-keys`. Keys are shown once at creation time, hashed in the DB, and can be scoped to `tts` and/or `stt`. Supply them via the `x-api-key` header when calling job endpoints server-to-server.
+- **RBAC** – Middleware enforces roles for sensitive operations (e.g., model reloads, API key management, voice cloning). Rate limiting is applied per org/API key with configurable windows in `.env`.
+
+## REST API Endpoints (Phase 2)
+All endpoints share the `/api/v1` prefix. Full OpenAPI docs are hosted at `http://localhost:4000/api/v1/docs` once the backend is running.
+
+### TTS
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| POST | `/tts/synthesize` | JWT or API key (scope `tts`) | Synchronously synthesize text to speech. Returns job metadata plus audio URL.
+| POST | `/tts/synthesize-batch` | JWT or API key (scope `tts`) | Submit multiple synthesis requests in one payload.
+| GET | `/tts/voices` | JWT | List the organization’s voice profiles.
+| POST | `/tts/voice-clone` | JWT (owner/admin/developer) | Upload a sample (`audio_sample`) to create a training voice profile. Audio is stored via the S3/MinIO adapter.
+
+Sample cURL:
+```bash
+curl -X POST http://localhost:4000/api/v1/tts/synthesize \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello world", "language": "en-US"}'
+```
+
+### STT
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| POST | `/stt/transcribe` | JWT or API key (scope `stt`) | Upload a single audio file (`audio_file`) for transcription.
+| POST | `/stt/batch-transcribe` | JWT or API key (scope `stt`) | Send multiple files (`audio_files`) and receive per-job IDs.
+| POST | `/stt/transcribe-realtime` | JWT or API key (scope `stt`) | REST stub returning `501` until the realtime WebSocket endpoint ships in Phase 5.
+
+### ML Model Management
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| GET | `/models/status` | JWT | Returns all ML models plus health from the FastAPI services.
+| POST | `/models/reload` | JWT (owner/admin) | Calls `initialize` on both ML services and updates model rows.
+
+### Analytics
+| Method | Path | Auth | Description |
+| --- | --- | --- | --- |
+| GET | `/analytics/usage` | JWT | Aggregated usage (total TTS chars, STT seconds, daily rollups for the last 30 days).
+
+Swagger definitions describe request/response shapes; refer to them for full field-level documentation.
+
 ## Running the Full Stack with Docker Compose
 ```bash
 docker-compose -f infra/docker/docker-compose.dev.yml up --build
