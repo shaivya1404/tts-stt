@@ -12,10 +12,11 @@ interface JwtPayload {
   email: string;
 }
 
-const ensureAuthContainer = (req: Request): void => {
+const ensureAuthContainer = (req: Request): NonNullable<Request['auth']> => {
   if (!req.auth) {
     req.auth = {};
   }
+  return req.auth;
 };
 
 const attachJwtToRequest = async (req: Request): Promise<void> => {
@@ -44,10 +45,10 @@ const attachJwtToRequest = async (req: Request): Promise<void> => {
     throw error;
   }
 
-  ensureAuthContainer(req);
-  req.auth.user = user;
-  req.auth.organization = user.organization;
-  req.auth.orgId = user.orgId;
+  const auth = ensureAuthContainer(req);
+  auth.user = user;
+  auth.organization = user.organization;
+  auth.orgId = user.orgId;
 };
 
 export const optionalJwt = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {

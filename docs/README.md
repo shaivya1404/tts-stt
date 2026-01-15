@@ -120,6 +120,12 @@ curl -X POST "http://localhost:4000/api/v1/stt/transcribe?language_hint=en-IN" \
 - Endpoint: `POST /api/v1/stt/batch-transcribe`
 - Body: `multipart/form-data` with repeated `audio_files` parts. Returns `{ "items": [ ... ] }`, where every element mirrors the single-file response payload for the corresponding upload.
 
+### End-to-end STT Flow
+1. A client hits either `/api/v1/stt/transcribe` or `/api/v1/stt/batch-transcribe`. The backend validates auth/API key scopes, enforces rate limits, and uploads the incoming audio to the `audio_files` table via the storage helper (S3/MinIO compatible).
+2. A corresponding row is inserted in `stt_jobs` (status `processing`). The backend then hands the raw buffer off to `mlSttClient`, which bridges to the FastAPI service at `/ml/stt/transcribe`.
+3. The STT FastAPI service runs the modular `STTPipeline` (Conformer RNNT primary + Whisper fallback, language ID, punctuation/ITN) and returns `{ text, language, confidence, timestamps, meta, modelUsed }`.
+4. The backend persists the `transcriptions` row, updates the `stt_jobs` status, and records a `usage_records` entry measured in seconds so analytics stay in sync. The final REST response simply echoes the job metadata plus transcription payload.
+
 ### ML Model Management
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
