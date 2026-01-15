@@ -1,0 +1,24 @@
+model_name: whisper_indic_small
+version: v1
+base_model: openai/whisper-small
+sample_rate: 16000
+languages:
+  - en-IN
+  - hi-IN
+  - ta-IN
+train_manifest: data/stt/train_manifest.jsonl
+val_manifest: data/stt/val_manifest.jsonl
+text_column: text
+audio_column: audio_filepath
+training:
+  epochs: 3
+  batch_size: 8
+  learning_rate: 1.0e-5
+  warmup_steps: 500
+  gradient_accumulation_steps: 2
+  max_steps: 10000
+  log_every_n_steps: 50
+output:
+  base_dir: ${MODEL_BASE_PATH:-/models}
+  save_every_n_steps: 1000
+  push_to_hub: false

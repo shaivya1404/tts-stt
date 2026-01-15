@@ -89,3 +89,12 @@ export const requireRole = (roles: UserRole[]) => (
 
   next();
 };
+
+export const requireAuthOrApiKey = (req: Request, res: Response, next: NextFunction): void => {
+  if (req.auth?.user || req.auth?.apiKey) {
+    next();
+    return;
+  }
+
+  res.status(401).json({ message: 'Authentication or API key required' });
+};

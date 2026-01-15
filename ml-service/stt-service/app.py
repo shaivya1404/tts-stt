@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -22,7 +22,7 @@ from common import (  # noqa: E402  # pylint: disable=wrong-import-position
     set_model_status,
     settings,
 )
-from core import STTPipeline  # noqa: E402
+from core import STTPipeline
 
 
 class TimestampSegment(BaseModel):
@@ -31,12 +31,13 @@ class TimestampSegment(BaseModel):
     word: str | None = None
 
 
-class STTResponse(BaseModel):
+class SttTranscribeResponse(BaseModel):
     text: str
     language: str
     confidence: float
     timestamps: List[TimestampSegment]
     meta: Dict[str, Any] = Field(default_factory=dict)
+    modelUsed: str | None = None
     status: str = "success"
 
 
@@ -49,7 +50,7 @@ class StatusResponse(BaseModel):
 MODEL_NAME = "conformer_rnnt_indic"
 MODEL_VERSION = "v1"
 pipeline: STTPipeline | None = None
-app = FastAPI(title="STT Service", version="0.3.0")
+app = FastAPI(title="STT Service", version="0.4.0")
 
 
 def _model_path() -> str:
@@ -79,7 +80,7 @@ async def startup_event() -> None:
     _register_default_model(status="loading")
     await _initialize_pipeline()
     set_model_status("stt", MODEL_NAME, MODEL_VERSION, "ready", path=_model_path())
-    logger.info("STT service started in {} mode", settings.environment)
+    logger.info("STT service started in %s mode", settings.environment)
 
 
 @app.get("/ml/stt/health", response_model=StatusResponse)
@@ -112,11 +113,11 @@ async def reload_models() -> StatusResponse:
     return StatusResponse(status="ok", detail="STT models reloaded", models=models)
 
 
-@app.post("/ml/stt/transcribe", response_model=STTResponse)
+@app.post("/ml/stt/transcribe", response_model=SttTranscribeResponse)
 async def transcribe_audio(
     file: UploadFile = File(...),
-    language_hint: str | None = None,
-) -> STTResponse:
+    language_hint: str | None = Form(default=None),
+) -> SttTranscribeResponse:
     if pipeline is None:
         raise HTTPException(status_code=503, detail="STT pipeline not initialized")
     payload = await file.read()
@@ -124,13 +125,13 @@ async def transcribe_audio(
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
     result = pipeline.transcribe(payload, language_hint)
     timestamps = [TimestampSegment(**segment) for segment in result.timestamps]
-    return STTResponse(
+    return SttTranscribeResponse(
         text=result.text,
         language=result.language,
         confidence=result.confidence,
         timestamps=timestamps,
         meta=result.meta,
-        status="success",
+        modelUsed=result.modelUsed,
     )
 
 
