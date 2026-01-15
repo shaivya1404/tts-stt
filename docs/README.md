@@ -101,11 +101,52 @@ curl -X POST http://localhost:4000/api/v1/tts/synthesize \
 | POST | `/stt/batch-transcribe` | JWT or API key (scope `stt`) | Send multiple files (`audio_files`) and receive per-job IDs.
 | POST | `/stt/transcribe-realtime` | JWT or API key (scope `stt`) | REST stub returning `501` until the realtime WebSocket endpoint ships in Phase 5.
 
+**Single-file transcription**
+
+- Endpoint: `POST /api/v1/stt/transcribe?language_hint=<optional-lang>`
+- Body: `multipart/form-data` with the field `audio_file` (max 30 MB). The request must include either a valid JWT or an API key that has the `stt` scope (`requireAuthOrApiKey` enforces this).
+- Response shape: `{ job_id, text, language, confidence, timestamps }`. Each call creates an `audio_files` row, kicks off an `stt_job`, stores the transcription payload, and records an `usage_records` entry with the detected duration.
+
+Example request:
+
+```bash
+curl -X POST "http://localhost:4000/api/v1/stt/transcribe?language_hint=en-IN" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -F "audio_file=@/path/to/sample.wav"
+```
+
+**Batch transcription**
+
+- Endpoint: `POST /api/v1/stt/batch-transcribe`
+- Body: `multipart/form-data` with repeated `audio_files` parts. Returns `{ "items": [ ... ] }`, where every element mirrors the single-file response payload for the corresponding upload.
+
 ### ML Model Management
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
 | GET | `/models/status` | JWT | Returns all ML models plus health from the FastAPI services.
 | POST | `/models/reload` | JWT (owner/admin) | Calls `initialize` on both ML services and updates model rows.
+
+### ML STT Microservice
+The FastAPI-based STT microservice (default `http://localhost:8002`) exposes the following endpoints, which the backend now calls via the new `mlSttClient` integration:
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/ml/stt/health` | Returns registry snapshot + readiness info. |
+| `GET` | `/ml/stt/models` | Lists registered STT models and their versions. |
+| `POST` | `/ml/stt/initialize` | Rebuilds the in-process pipeline (used at boot). |
+| `POST` | `/ml/stt/reload` | Simulates a hot-reload cycle for active STT models. |
+| `POST` | `/ml/stt/transcribe` | Accepts `multipart/form-data` (`file` + optional `language_hint` form fields) and runs the placeholder pipeline. |
+| `POST` | `/ml/stt/stream` | Stub that currently returns `501`.
+
+Sample `curl` hitting the ML service directly:
+
+```bash
+curl -X POST http://localhost:8002/ml/stt/transcribe \
+  -F "file=@/path/to/sample.wav" \
+  -F "language_hint=hi-IN"
+```
+
+The pipeline defined in `ml-service/stt-service/core/pipeline.py` chains audio preprocessing, denoising, AEC, VAD, language ID, Conformer RNNT inference, Whisper fallback, LM refinement, punctuation, truecasing, ITN, and quality scoring. It emits `meta.duration_seconds`, `timestamps`, and the `modelUsed` identifier so that the backend can store the transcription plus usage metrics.
 
 ### Analytics
 | Method | Path | Auth | Description |
@@ -113,6 +154,29 @@ curl -X POST http://localhost:4000/api/v1/tts/synthesize \
 | GET | `/analytics/usage` | JWT | Aggregated usage (total TTS chars, STT seconds, daily rollups for the last 30 days).
 
 Swagger definitions describe request/response shapes; refer to them for full field-level documentation.
+
+## STT Training Workflows
+STT checkpoints are stored under `${MODEL_BASE_PATH}/stt/<family>/<model_name>/<version>/`. The ML service loads artifacts from that layout during startup.
+
+Two lightweight training entrypoints live in `ml-service/training/stt/`:
+
+1. **Conformer RNNT placeholder**
+   ```bash
+   python ml-service/training/stt/train_conformer_rnnt.py \
+     --config ml-service/training/stt/configs/conformer_indic_v1.yaml \
+     --device cpu
+   ```
+   - Consumes JSONL manifests declared in the config, synthesizes random batches, and saves checkpoints to `stt/<model>/<version>/`.
+
+2. **Whisper fine-tune skeleton**
+   ```bash
+   python ml-service/training/stt/train_whisper.py \
+     --config ml-service/training/stt/configs/whisper_finetune_indic_v1.yaml \
+     --device cuda
+   ```
+   - Demonstrates how to wire Hugging Face `datasets` + `transformers` with `language_hint` aware configs. It saves both the model and processor beside the checkpoints directory, ready for the serving pipeline to pick up.
+
+Both scripts simply stub the training loops today—swap in real datasets/models and update the configs when you plug in production checkpoints.
 
 ## Running the Full Stack with Docker Compose
 ```bash

@@ -1,4 +1,4 @@
 """Core STT pipeline components."""
-from .pipeline import STTPipeline, STTPipelineResult
+from .pipeline import STTPipeline, SttResult
 
-__all__ = ["STTPipeline", "STTPipelineResult"]
+__all__ = ["STTPipeline", "SttResult"]
