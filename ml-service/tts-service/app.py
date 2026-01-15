@@ -1,4 +1,3 @@
-"""FastAPI application for the modular TTS service."""
 from __future__ import annotations
 
 import asyncio
@@ -22,44 +21,20 @@ from common import (  # noqa: E402  # pylint: disable=wrong-import-position
     set_model_status,
     settings,
 )
-from core import TTSPipeline, TTSPipelineInput  # noqa: E402
-
-
-class TTSRequest(BaseModel):
-    text: str = Field(..., min_length=1)
-    language: str | None = None
-    voice_id: str | None = None
-    emotion: str | None = None
-    speed: float = Field(default=1.0, gt=0.0, le=3.0)
-
-
-class TTSResponse(BaseModel):
-    audio_path: str
-    duration: float | None = None
-    meta: Dict[str, Any] = Field(default_factory=dict)
-    status: str = "success"
+from core import TTSPipeline, TtsRequest, TtsResult  # noqa: E402
 
 
 class StatusResponse(BaseModel):
     status: str
     detail: str
+    service: str = Field(default="tts-service")
     models: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 MODEL_NAME = "vits_multispkr_indic"
 MODEL_VERSION = "v1"
 pipeline: TTSPipeline | None = None
-app = FastAPI(title="TTS Service", version="0.3.0")
-
-
-def _pipeline_input(payload: TTSRequest) -> TTSPipelineInput:
-    return TTSPipelineInput(
-        text=payload.text,
-        language=payload.language,
-        voice_id=payload.voice_id,
-        emotion=payload.emotion,
-        speed=payload.speed,
-    )
+app = FastAPI(title="TTS Service", version="0.4.0")
 
 
 def _model_path() -> str:
@@ -122,16 +97,12 @@ async def reload_models() -> StatusResponse:
     return StatusResponse(status="ok", detail="TTS models reloaded", models=models)
 
 
-@app.post("/ml/tts/predict", response_model=TTSResponse)
-async def synthesize_speech(payload: TTSRequest) -> TTSResponse:
+@app.post("/ml/tts/predict", response_model=TtsResult)
+async def synthesize_speech(payload: TtsRequest) -> TtsResult:
     if pipeline is None:
         raise HTTPException(status_code=503, detail="TTS pipeline not initialized")
-    result = pipeline.synthesize(_pipeline_input(payload))
+
+    result = pipeline.synthesize(payload)
     if not result.audio_path:
         raise HTTPException(status_code=500, detail="Failed to synthesize audio")
-    return TTSResponse(
-        audio_path=result.audio_path,
-        duration=result.duration,
-        meta=result.meta,
-        status="success",
-    )
+    return result

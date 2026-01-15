@@ -14,7 +14,7 @@ const synthSchema = z.object({
 });
 
 const batchSchema = z.object({
-  items: z.array(synthSchema.omit({ voiceId: true }).extend({ voiceId: z.string().optional() })).min(1),
+  items: z.array(synthSchema).min(1),
 });
 
 const voiceCloneSchema = z.object({
@@ -39,10 +39,10 @@ export const synthesize = async (req: Request, res: Response, next: NextFunction
     });
 
     res.json({
-      job_id: result.job.id,
-      audio_url: result.mlResponse.audioUrl,
-      duration: result.mlResponse.duration ?? null,
-      status: result.job.status,
+      job_id: result.jobId,
+      audio_url: result.audioUrl,
+      duration: result.duration,
+      status: result.status,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -58,9 +58,24 @@ export const synthesizeBatch = async (req: Request, res: Response, next: NextFun
     const payload = batchSchema.parse(req.body);
     const context = getOrgContext(req);
 
-    const items = await TtsService.synthesizeBatch(context, payload.items);
+    const normalizedItems = payload.items.map((item) => ({
+      text: item.text,
+      language: item.language,
+      voiceId: item.voiceId || item.voice_id,
+      emotion: item.emotion,
+      speed: item.speed,
+    }));
 
-    res.json({ items });
+    const items = await TtsService.synthesizeBatch(context, normalizedItems);
+
+    res.json({
+      items: items.map((item) => ({
+        job_id: item.jobId,
+        audio_url: item.audioUrl,
+        duration: item.duration,
+        status: item.status,
+      })),
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ message: error.message });

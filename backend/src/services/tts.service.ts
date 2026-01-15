@@ -1,7 +1,7 @@
-import { AudioFileType, JobStatus } from '@prisma/client';
+import { AudioFileType, JobStatus, VoiceProfileStatus } from '@prisma/client';
 
 import prisma from '../lib/prisma';
-import { mlTtsClient } from './mlTtsClient';
+import { mlTtsClient } from './mlTtsClient.service';
 import storageService from '../utils/storage';
 
 interface SynthesizeInput {
@@ -15,8 +15,35 @@ interface SynthesizeInput {
   speed?: number;
 }
 
+interface OrgContext {
+  orgId: string;
+  userId?: string;
+  apiKeyId?: string;
+}
+
+export interface TtsSynthesizeResult {
+  jobId: string;
+  status: JobStatus;
+  audioUrl: string | null;
+  duration: number | null;
+}
+
+const resolveCharacterUnits = (text: string, meta?: Record<string, any>): number => {
+  const rawValue = meta?.char_count ?? meta?.characters ?? meta?.charCount;
+  if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+    return rawValue;
+  }
+  if (typeof rawValue === 'string') {
+    const parsed = Number(rawValue);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return text.length;
+};
+
 export const TtsService = {
-  async synthesize(input: SynthesizeInput) {
+  async synthesize(input: SynthesizeInput): Promise<TtsSynthesizeResult> {
     const job = await prisma.ttsJob.create({
       data: {
         orgId: input.orgId,
@@ -40,18 +67,24 @@ export const TtsService = {
         speed: input.speed,
       });
 
+      const pipelineSucceeded = mlResponse.status?.toLowerCase() === 'success' && Boolean(mlResponse.audioPath);
+      if (!pipelineSucceeded || !mlResponse.audioPath) {
+        const errorMessage = (mlResponse.meta?.error as string) || 'TTS synthesis failed';
+        throw new Error(errorMessage);
+      }
+
       const audioFile = await prisma.audioFile.create({
         data: {
           orgId: input.orgId,
           userId: input.userId,
           type: AudioFileType.tts_output,
-          storagePath: mlResponse.audioUrl,
+          storagePath: mlResponse.audioPath,
           mimeType: 'audio/wav',
-          durationSeconds: mlResponse.duration,
+          durationSeconds: mlResponse.duration ?? undefined,
         },
       });
 
-      const updatedJob = await prisma.ttsJob.update({
+      const completedJob = await prisma.ttsJob.update({
         where: { id: job.id },
         data: {
           status: JobStatus.completed,
@@ -60,20 +93,27 @@ export const TtsService = {
         },
       });
 
+      const units = resolveCharacterUnits(input.text, mlResponse.meta);
       await prisma.usageRecord.create({
         data: {
           orgId: input.orgId,
           apiKeyId: input.apiKeyId,
           type: 'tts',
-          units: input.text.length,
+          units,
           metadata: {
             jobId: job.id,
             voiceProfileId: input.voiceId,
+            charCount: units,
           },
         },
       });
 
-      return { job: updatedJob, audioFile, mlResponse };
+      return {
+        jobId: completedJob.id,
+        status: completedJob.status,
+        audioUrl: audioFile.storagePath,
+        duration: mlResponse.duration ?? null,
+      };
     } catch (error) {
       await prisma.ttsJob.update({
         where: { id: job.id },
@@ -87,25 +127,20 @@ export const TtsService = {
   },
 
   async synthesizeBatch(
-    orgContext: { orgId: string; userId?: string; apiKeyId?: string },
+    orgContext: OrgContext,
     requests: Array<Omit<SynthesizeInput, 'orgId' | 'userId' | 'apiKeyId'>>,
-  ) {
-    const results: Array<{ jobId: string; status: JobStatus; audioUrl?: string; duration?: number }> = [];
+  ): Promise<TtsSynthesizeResult[]> {
+    const results: TtsSynthesizeResult[] = [];
     // eslint-disable-next-line no-restricted-syntax
     for (const item of requests) {
       // eslint-disable-next-line no-await-in-loop
-      const { job, mlResponse } = await TtsService.synthesize({
+      const result = await TtsService.synthesize({
         ...item,
         orgId: orgContext.orgId,
         userId: orgContext.userId,
         apiKeyId: orgContext.apiKeyId,
       });
-      results.push({
-        jobId: job.id,
-        status: job.status,
-        audioUrl: mlResponse.audioUrl,
-        duration: mlResponse.duration,
-      });
+      results.push(result);
     }
     return results;
   },
@@ -135,9 +170,10 @@ export const TtsService = {
     description?: string;
     baseModel?: string;
   }) {
+    const extension = input.file.originalname.split('.').pop();
     const storageKey = await storageService.uploadBuffer(input.file.buffer, input.file.mimetype, {
-      prefix: 'voice-clone-samples',
-      extension: input.file.originalname.split('.').pop(),
+      prefix: `voice-clone/${input.orgId}`,
+      extension,
     });
 
     await prisma.audioFile.create({
@@ -151,6 +187,8 @@ export const TtsService = {
       },
     });
 
+    const placeholderEmbeddingPath = `voice-embeddings/${input.orgId}/${Date.now()}-pending.vec`;
+
     return prisma.voiceProfile.create({
       data: {
         orgId: input.orgId,
@@ -158,9 +196,9 @@ export const TtsService = {
         language: input.language,
         gender: input.gender,
         description: input.description,
-        baseModel: input.baseModel || 'vits_indic_v1',
-        speakerEmbeddingPath: storageKey,
-        status: 'training',
+        baseModel: input.baseModel || 'vits_multispkr_indic_v1',
+        speakerEmbeddingPath: placeholderEmbeddingPath,
+        status: VoiceProfileStatus.training,
       },
     });
   },
