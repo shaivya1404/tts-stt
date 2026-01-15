@@ -33,7 +33,7 @@ export const transcribe = async (req: Request, res: Response, next: NextFunction
       return;
     }
 
-    const context = getOrgContext(req);
+    const context = await getOrgContext(req);
     const languageHint = parseLanguageHint(req.query.language_hint);
 
     const result = await SttService.transcribe({
@@ -62,7 +62,7 @@ export const batchTranscribe = async (req: Request, res: Response, next: NextFun
       return;
     }
 
-    const context = getOrgContext(req);
+    const context = await getOrgContext(req);
     const languageHint = parseLanguageHint(req.query.language_hint);
 
     const results = await SttService.batchTranscribe(
