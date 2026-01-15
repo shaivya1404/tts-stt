@@ -9,8 +9,8 @@ from typing import List, Tuple
 from loguru import logger
 
 
-def detect_speech_segments(audio_bytes: bytes) -> List[Tuple[float, float]]:
-    """Return dummy VAD segments."""
-    logger.debug("Running VAD on {} bytes", len(audio_bytes))
-    duration_seconds = max(len(audio_bytes) / 32000, 1.0)
-    return [(0.0, duration_seconds)]
+def detect_speech_segments(audio_bytes: bytes, duration_seconds: float = 3.5) -> List[Tuple[float, float]]:
+    """Return dummy VAD segments covering the whole utterance."""
+    logger.debug("Running VAD on {} bytes (duration≈{}s)", len(audio_bytes), duration_seconds)
+    end_time = max(duration_seconds, 0.1)
+    return [(0.0, end_time)]

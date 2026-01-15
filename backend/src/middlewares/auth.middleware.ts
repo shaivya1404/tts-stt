@@ -72,6 +72,15 @@ export const requireJwt = async (req: Request, res: Response, next: NextFunction
   }
 };
 
+export const requireAuthOrApiKey = (req: Request, res: Response, next: NextFunction): void => {
+  if (req.auth?.user || req.auth?.apiKey) {
+    next();
+    return;
+  }
+
+  res.status(401).json({ message: 'Authentication or API key required' });
+};
+
 export const requireRole = (roles: UserRole[]) => (
   req: Request,
   res: Response,

@@ -68,6 +68,8 @@ Mount `${MODEL_BASE_PATH}` if you need to persist synthesized audio or host real
 | `POST` | `/ml/stt/transcribe` | Accepts an audio file upload and returns structured transcription data. |
 | `POST` | `/ml/stt/stream` | Stub endpoint for future streaming transcription. |
 
+`POST /ml/stt/transcribe` expects `multipart/form-data` with a `file` field and an optional `language_hint` `Form` field. The FastAPI handler streams the bytes into `STTPipeline`, which executes preprocessing → RNNoise → AEC → VAD → language ID → Conformer RNN-T (`modelUsed`) with an automatic Whisper fallback when the primary confidence dips below `0.7`. The response includes timestamps, per-request metadata (`duration_seconds`, VAD segments, quality score, etc.), and the model that produced the transcript so the backend can persist usage metrics accurately.
+
 ### Running Locally
 
 ```bash

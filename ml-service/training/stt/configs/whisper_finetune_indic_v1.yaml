@@ -1,0 +1,17 @@
+model_name: whisper_indic_medium
+version: v1
+base_model: openai/whisper-medium
+sample_rate: 16000
+languages:
+  - en-IN
+  - hi-IN
+train_manifest: data/whisper_train_manifest.jsonl
+val_manifest: data/whisper_val_manifest.jsonl
+training:
+  batch_size: 4
+  num_epochs: 2
+  learning_rate: 0.00001
+  warmup_steps: 500
+  gradient_accumulation_steps: 2
+output:
+  push_to_hub: false

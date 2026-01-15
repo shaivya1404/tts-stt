@@ -1,0 +1,17 @@
+model_name: conformer_rnnt_indic
+version: v1
+sample_rate: 16000
+languages:
+  - en-IN
+  - hi-IN
+train_manifest: data/indic_train_manifest.jsonl
+val_manifest: data/indic_val_manifest.jsonl
+optimizer:
+  lr: 0.0005
+  weight_decay: 0.00001
+training:
+  batch_size: 8
+  num_epochs: 3
+  grad_clip: 1.0
+output:
+  checkpoint_interval: 1

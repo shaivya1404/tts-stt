@@ -2,7 +2,7 @@ import { MlModelStatus } from '@prisma/client';
 
 import prisma from '../lib/prisma';
 import { mlTtsClient } from './mlTtsClient';
-import { mlSttClient } from './mlSttClient';
+import { mlSttClient } from './mlSttClient.service';
 
 export const ModelsService = {
   async getStatus() {

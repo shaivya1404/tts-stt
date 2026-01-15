@@ -1,22 +1,66 @@
-import { AudioFileType, JobStatus } from '@prisma/client';
+import { AudioFileType, JobStatus, SttJob, Transcription, UsageType } from '@prisma/client';
 
 import prisma from '../lib/prisma';
-import { mlSttClient } from './mlSttClient';
+import { mlSttClient, MlSttTranscribeResult } from './mlSttClient.service';
 import storageService from '../utils/storage';
+import { UsageService } from './usage.service';
+
+interface UploadedFile {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+  size: number;
+}
 
 interface TranscribeInput {
   orgId: string;
   userId?: string;
   apiKeyId?: string;
   languageHint?: string;
-  file: { buffer: Buffer; mimetype: string; originalname: string; size: number };
+  file: UploadedFile;
 }
 
+interface TranscribeResult {
+  job: SttJob;
+  transcription: Transcription;
+}
+
+const extractExtension = (fileName: string): string | undefined => {
+  const parts = fileName.split('.');
+  if (parts.length < 2) {
+    return undefined;
+  }
+  return parts.pop();
+};
+
+const getNumericMeta = (meta: Record<string, unknown> | undefined, key: string): number | undefined => {
+  if (!meta) {
+    return undefined;
+  }
+  const value = meta[key];
+  return typeof value === 'number' ? value : undefined;
+};
+
+const resolveDurationSeconds = (mlResponse: MlSttTranscribeResult): number | undefined => {
+  const metaDuration =
+    getNumericMeta(mlResponse.meta, 'duration_seconds') ?? getNumericMeta(mlResponse.meta, 'durationSeconds');
+  if (typeof metaDuration === 'number') {
+    return metaDuration;
+  }
+
+  const lastTimestamp = mlResponse.timestamps?.[mlResponse.timestamps.length - 1];
+  if (lastTimestamp && typeof lastTimestamp.end === 'number') {
+    return lastTimestamp.end;
+  }
+
+  return undefined;
+};
+
 export const SttService = {
-  async transcribe(input: TranscribeInput) {
+  async transcribe(input: TranscribeInput): Promise<TranscribeResult> {
     const storageKey = await storageService.uploadBuffer(input.file.buffer, input.file.mimetype, {
-      prefix: 'stt-input',
-      extension: input.file.originalname.split('.').pop(),
+      prefix: `stt-input/${input.orgId}`,
+      extension: extractExtension(input.file.originalname),
     });
 
     const audioFile = await prisma.audioFile.create({
@@ -36,15 +80,15 @@ export const SttService = {
         userId: input.userId,
         apiKeyId: input.apiKeyId,
         inputAudioFileId: audioFile.id,
-        modelUsed: 'conformer_rnnt',
+        modelUsed: 'stt_pipeline_pending',
         status: JobStatus.processing,
       },
     });
 
     try {
-      const mlResponse = await mlSttClient.transcribe({
+      const mlResponse = await mlSttClient.transcribeWithMl({
         buffer: input.file.buffer,
-        filename: input.file.originalname,
+        fileName: input.file.originalname,
         mimeType: input.file.mimetype,
         languageHint: input.languageHint,
       });
@@ -59,11 +103,9 @@ export const SttService = {
         },
       });
 
-      const durationSeconds = mlResponse.timestamps?.length
-        ? mlResponse.timestamps[mlResponse.timestamps.length - 1].end
-        : undefined;
+      const durationSeconds = resolveDurationSeconds(mlResponse);
 
-      if (durationSeconds) {
+      if (typeof durationSeconds === 'number') {
         await prisma.audioFile.update({
           where: { id: audioFile.id },
           data: { durationSeconds },
@@ -75,20 +117,21 @@ export const SttService = {
         data: {
           status: JobStatus.completed,
           languageDetected: mlResponse.language,
+          modelUsed: mlResponse.modelUsed || job.modelUsed,
           completedAt: new Date(),
         },
       });
 
-      await prisma.usageRecord.create({
-        data: {
-          orgId: input.orgId,
-          apiKeyId: input.apiKeyId,
-          type: 'stt',
-          units: durationSeconds || 0,
-          metadata: {
-            jobId: job.id,
-            inputAudioFileId: audioFile.id,
-          },
+      await UsageService.recordUsage({
+        orgId: input.orgId,
+        apiKeyId: input.apiKeyId,
+        type: UsageType.stt,
+        units: durationSeconds ?? 0,
+        metadata: {
+          jobId: job.id,
+          inputAudioFileId: audioFile.id,
+          modelUsed: mlResponse.modelUsed,
+          durationSeconds: durationSeconds ?? 0,
         },
       });
 
@@ -107,10 +150,10 @@ export const SttService = {
 
   async batchTranscribe(
     context: { orgId: string; userId?: string; apiKeyId?: string },
-    files: Array<{ buffer: Buffer; mimetype: string; originalname: string; size: number }>,
+    files: UploadedFile[],
     languageHint?: string,
-  ) {
-    const jobs = [];
+  ): Promise<TranscribeResult[]> {
+    const jobs: TranscribeResult[] = [];
     // eslint-disable-next-line no-restricted-syntax
     for (const file of files) {
       // eslint-disable-next-line no-await-in-loop
@@ -121,7 +164,7 @@ export const SttService = {
         languageHint,
         file,
       });
-      jobs.push(result.job);
+      jobs.push(result);
     }
     return jobs;
   },

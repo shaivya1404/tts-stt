@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 
 import { transcribe, transcribeRealtimeStub, batchTranscribe } from '../controllers/stt.controller';
-import { optionalJwt } from '../middlewares/auth.middleware';
+import { optionalJwt, requireAuthOrApiKey } from '../middlewares/auth.middleware';
 import { optionalApiKey, requireOrgContext, ensureScopeWhenPresent } from '../middlewares/apiKey.middleware';
 import { rateLimit } from '../middlewares/rateLimit.middleware';
 
@@ -14,6 +14,7 @@ router.post(
   '/transcribe',
   optionalJwt,
   optionalApiKey,
+  requireAuthOrApiKey,
   ensureScopeWhenPresent('stt'),
   requireOrgContext,
   rateLimit(),
@@ -25,6 +26,7 @@ router.post(
   '/transcribe-realtime',
   optionalJwt,
   optionalApiKey,
+  requireAuthOrApiKey,
   ensureScopeWhenPresent('stt'),
   requireOrgContext,
   transcribeRealtimeStub,
@@ -34,6 +36,7 @@ router.post(
   '/batch-transcribe',
   optionalJwt,
   optionalApiKey,
+  requireAuthOrApiKey,
   ensureScopeWhenPresent('stt'),
   requireOrgContext,
   rateLimit(),

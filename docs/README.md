@@ -101,6 +101,28 @@ curl -X POST http://localhost:4000/api/v1/tts/synthesize \
 | POST | `/stt/batch-transcribe` | JWT or API key (scope `stt`) | Send multiple files (`audio_files`) and receive per-job IDs.
 | POST | `/stt/transcribe-realtime` | JWT or API key (scope `stt`) | REST stub returning `501` until the realtime WebSocket endpoint ships in Phase 5.
 
+Each transcription request persists the source audio under `stt-input/<orgId>/...`, creates a `stt_jobs` row in the database, waits for the ML service, then stores the decoded text inside `transcriptions` plus a `usage_records` entry (units = audio seconds). The backend forwards optional `language_hint` query params to the ML pipeline so customers can bias decoding per request.
+
+#### Example: `/api/v1/stt/transcribe`
+```bash
+curl -X POST "http://localhost:4000/api/v1/stt/transcribe?language_hint=en-IN" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: multipart/form-data" \
+  -F "audio_file=@/path/to/sample.wav"
+```
+Response:
+```json
+{
+  "job_id": "c6e...",
+  "text": "synthetic transcript en-IN",
+  "language": "en-IN",
+  "confidence": 0.82,
+  "timestamps": [{ "start": 0.0, "end": 3.5, "word": "synthetic transcript en-IN" }]
+}
+```
+
+`/stt/batch-transcribe` accepts multiple `audio_files` fields in one multipart payload and now responds with `{ "items": [ ... ] }`, where each item mirrors the single-file response.
+
 ### ML Model Management
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |

@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,7 @@ class STTResponse(BaseModel):
     confidence: float
     timestamps: List[TimestampSegment]
     meta: Dict[str, Any] = Field(default_factory=dict)
+    modelUsed: str | None = None
     status: str = "success"
 
 
@@ -115,7 +116,7 @@ async def reload_models() -> StatusResponse:
 @app.post("/ml/stt/transcribe", response_model=STTResponse)
 async def transcribe_audio(
     file: UploadFile = File(...),
-    language_hint: str | None = None,
+    language_hint: str | None = Form(None),
 ) -> STTResponse:
     if pipeline is None:
         raise HTTPException(status_code=503, detail="STT pipeline not initialized")
@@ -130,6 +131,7 @@ async def transcribe_audio(
         confidence=result.confidence,
         timestamps=timestamps,
         meta=result.meta,
+        modelUsed=result.modelUsed,
         status="success",
     )
 
