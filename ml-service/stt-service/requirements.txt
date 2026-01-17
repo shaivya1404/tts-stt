@@ -4,3 +4,10 @@ pydantic==2.5.3
 pydantic-settings==2.1.0
 loguru==0.7.2
 python-multipart==0.0.9
+
+# ML Dependencies for Faster-Whisper STT
+faster-whisper>=1.0.0
+numpy>=1.24.0
+soundfile>=0.12.0
+librosa>=0.10.0
+torch>=2.0.0

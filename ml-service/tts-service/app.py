@@ -31,7 +31,7 @@ class StatusResponse(BaseModel):
     models: List[Dict[str, Any]] = Field(default_factory=list)
 
 
-MODEL_NAME = "vits_multispkr_indic"
+MODEL_NAME = "xtts_v2"
 MODEL_VERSION = "v1"
 pipeline: TTSPipeline | None = None
 app = FastAPI(title="TTS Service", version="0.4.0")

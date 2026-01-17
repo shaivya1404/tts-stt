@@ -47,7 +47,7 @@ class StatusResponse(BaseModel):
     models: List[Dict[str, Any]] = Field(default_factory=list)
 
 
-MODEL_NAME = "conformer_rnnt_indic"
+MODEL_NAME = "whisper_large-v3"
 MODEL_VERSION = "v1"
 pipeline: STTPipeline | None = None
 app = FastAPI(title="STT Service", version="0.4.0")
