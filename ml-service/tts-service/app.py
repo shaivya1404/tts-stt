@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -99,10 +101,58 @@ async def reload_models() -> StatusResponse:
 
 @app.post("/ml/tts/predict", response_model=TtsResult)
 async def synthesize_speech(payload: TtsRequest) -> TtsResult:
+    """Synthesize speech from text.
+
+    Returns audio file path, download URL, and base64-encoded audio data.
+    """
     if pipeline is None:
         raise HTTPException(status_code=503, detail="TTS pipeline not initialized")
 
     result = pipeline.synthesize(payload)
     if not result.audio_path:
         raise HTTPException(status_code=500, detail="Failed to synthesize audio")
+
+    # Add download URL
+    filename = Path(result.audio_path).name
+    result.audio_url = f"/ml/tts/audio/{filename}"
+
+    # Add base64 encoded audio for remote access
+    try:
+        with open(result.audio_path, "rb") as f:
+            result.audio_base64 = base64.b64encode(f.read()).decode("utf-8")
+    except Exception as e:
+        logger.warning("Failed to encode audio as base64: %s", e)
+
     return result
+
+
+@app.get("/ml/tts/audio/{filename}")
+async def download_audio(filename: str) -> FileResponse:
+    """Download a generated audio file by filename.
+
+    Args:
+        filename: The audio filename (e.g., 'default_abc123.wav')
+
+    Returns:
+        The audio file as a downloadable response
+    """
+    # Validate filename to prevent path traversal attacks
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    # Search for the file in possible output directories
+    possible_paths = [
+        Path(settings.model_base_path) / "tts" / MODEL_NAME / MODEL_VERSION / "synthesized" / filename,
+        Path("/tmp/models") / "tts" / MODEL_NAME / MODEL_VERSION / "synthesized" / filename,
+        Path("/outputs") / filename,  # For custom deployments
+    ]
+
+    for audio_path in possible_paths:
+        if audio_path.exists():
+            return FileResponse(
+                path=str(audio_path),
+                media_type="audio/wav",
+                filename=filename,
+            )
+
+    raise HTTPException(status_code=404, detail=f"Audio file not found: {filename}")

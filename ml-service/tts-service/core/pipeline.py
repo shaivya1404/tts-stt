@@ -43,6 +43,8 @@ class TtsResult(BaseModel):
     """Structured response emitted by the pipeline."""
 
     audio_path: str | None = None
+    audio_url: str | None = None  # Relative URL for downloading audio
+    audio_base64: str | None = None  # Base64 encoded audio for direct access
     duration: float | None = None
     status: str = "success"
     meta: Dict[str, Any] = Field(default_factory=dict)
